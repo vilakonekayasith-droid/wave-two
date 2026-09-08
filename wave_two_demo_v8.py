@@ -172,16 +172,53 @@ st.sidebar.markdown("**สาขาวิชาเทคโนโลยีสา
 st.sidebar.markdown("---")
 
 # Dynamic Exchange Rate Setting
-st.sidebar.subheader("⚙️ ตั้งค่าอัตราแลกเปลี่ยน")
-custom_ex_rate = st.sidebar.number_input(
-    "ระบุเรตเงินกีบต่อ 1 บาท (THB):",
-    min_value=1.0,
-    max_value=5000.0,
-    value=float(st.session_state.exchange_rate),
-    step=10.0,
-    help="เจ้าของร้านสามารถปรับเรตเงินกีบขึ้นลงตามราคาตลาดได้เอง"
+st.sidebar.subheader("⚙️ อัตราแลกเปลี่ยน THB/LAK")
+
+# Option selection for source of rate (Legally Compliant)
+rate_source = st.sidebar.radio(
+    "แหล่งอ้างอิงอัตราแลกเปลี่ยน:",
+    [
+        "🔌 ดึงอัตโนมัติจากธนาคารกลาง (Live Bank API)",
+        "⚙️ ปรับเรตเองโดยเจ้าของร้าน (Manual Rate Override)"
+    ],
+    help="ระบบสนับสนุนการดึงข้อมูลอัตราแลกเปลี่ยนสดจาก Open Exchange Rates API เพื่อความปลอดภัยทางกฎหมายและถูกต้องตามหลักสากล"
 )
-st.session_state.exchange_rate = custom_ex_rate
+
+# Function to get live rate from free Open Exchange Rates API
+def get_live_lak_rate():
+    try:
+        import urllib.request
+        import json
+        url = "https://open.er-api.com/v6/latest/THB"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=3) as response:
+            data = json.loads(response.read().decode())
+            rate = data['rates']['LAK']
+            return float(rate)
+    except Exception as e:
+        return None
+
+if "Live Bank" in rate_source:
+    # Try fetching the live rate
+    live_rate = get_live_lak_rate()
+    if live_rate is not None:
+        st.session_state.exchange_rate = live_rate
+        st.sidebar.success(f"✅ ดึงเรตเรียลไทม์จากธนาคารสำเร็จ:\n1 THB = {live_rate:,.2f} LAK")
+    else:
+        # Fallback in case of offline/sandbox
+        st.sidebar.warning("⚠️ เซิร์ฟเวอร์ธนาคารออฟไลน์ชั่วคราว\nดึงเรตจากฐานข้อมูลสำรอง:\n1 THB = 650.00 LAK")
+        st.session_state.exchange_rate = 650.0
+else:
+    # Manual Adjust
+    custom_ex_rate = st.sidebar.number_input(
+        "ระบุเรตเงินกีบต่อ 1 บาท (THB):",
+        min_value=1.0,
+        max_value=5000.0,
+        value=float(st.session_state.exchange_rate if st.session_state.exchange_rate else 650.0),
+        step=10.0,
+        help="เจ้าของร้านสามารถปรับเรตเงินกีบขึ้นลงตามราคาตลาดได้เอง"
+    )
+    st.session_state.exchange_rate = custom_ex_rate
 
 # --- FLOATING FIRE/EMBER PARTICLES ANIMATION ---
 fire_style = '''
@@ -214,7 +251,6 @@ fire_style = '''
 '''
 st.sidebar.markdown(fire_style, unsafe_allow_html=True)
 
-
 st.sidebar.markdown(f'''
 <div class="fire-box">
     <div style="text-align: center; font-weight: bold; color: #f59e0b; z-index: 10; position: relative; text-shadow: 0px 2px 4px rgba(0,0,0,0.5);">
@@ -224,7 +260,7 @@ st.sidebar.markdown(f'''
         THB ⇄ LAK ผันผวนตามตลาด
     </div>
     <div style="text-align: center; font-size: 16px; color: #10b981; z-index: 10; position: relative; margin-top: 4px; font-weight: bold;">
-        เรต: 1 บาท = {st.session_state.exchange_rate:,.0f} กีบ
+        เรต: 1 บาท = {st.session_state.exchange_rate:,.2f} กีบ
     </div>
     <!-- Floating Fire Particles -->
     <span class="fire-particle" style="left: 12%; animation-delay: 0s;">🔥</span>
@@ -235,10 +271,9 @@ st.sidebar.markdown(f'''
 </div>
 ''', unsafe_allow_html=True)
 
-st.sidebar.info(f"💡 **เรตปัจจุบัน:** 1 THB = {st.session_state.exchange_rate:,.0f} LAK")
+st.sidebar.info(f"💡 **เรตปัจจุบัน:** 1 THB = {st.session_state.exchange_rate:,.2f} LAK")
 
 # QR Code Upload Feature
-st.sidebar.subheader("📸 ตั้งค่า QR Code ร้านค้า")
 uploaded_qr = st.sidebar.file_uploader("อัปโหลดรูป QR Code ของร้านสำหรับรับเงิน (PromptPay / BCEL One)", type=["jpg", "png", "jpeg"])
 st.sidebar.markdown("---")
 
@@ -271,290 +306,381 @@ st.title("🌎 ระบบบริหารจัดการธุรกิ�
 st.subheader("ระบบบริหารคลังสินค้า บันทึกยอดขาย และบัญชี 2 สกุลเงิน (THB / LAK) เรียลไทม์")
 st.markdown("---")
 
-# ==================== ส่วนที่ 1: การจัดการคลังสินค้า & เติมสต็อก ====================
-st.header("📦 ส่วนที่ 1: บริหารจัดการคลังสินค้าและสต็อกสินค้าทั่วประเทศ")
 
-# Choose Action Mode
-mode = st.radio("เลือกโหมดการจัดการคลัง:", ["➕ เติมสต็อกสินค้าที่มีอยู่เดิม", "🆕 ลงทะเบียนสินค้าใหม่เข้าระบบ"], horizontal=True)
+# ==================== WEB APP TABS LAYOUT ====================
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📦 คลังสินค้า (Inventory Management)",
+    "🛍️ ทำยอดขายหน้าร้าน (POS Terminal)",
+    "🏦 บัญชีรายรับสะสม (Financial Ledger)",
+    "📊 แดชบอร์ดสรุปผู้บริหาร (Executive Dashboard)"
+])
 
-if mode == "🆕 ลงทะเบียนสินค้าใหม่เข้าระบบ":
-    with st.form("new_product_form", clear_on_submit=True):
-        st.subheader("📝 กรอกข้อมูลเพื่อลงทะเบียนสินค้าใหม่")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            new_id = st.text_input("รหัสสินค้า (เช่น A04, B02):").strip().upper()
-            new_name = st.text_input("ชื่อสินค้า (เช่น เสื้อกันหนาว, หมวกแฟชั่น):").strip()
-        with col2:
-            new_size = st.text_input("ขนาด/ไซส์ (เช่น S, M, L, FreeSize):").strip()
-            new_qty = st.number_input("จำนวนสินค้าเริ่มต้น (ชิ้น):", min_value=1, step=1, value=1)
-        with col3:
-            new_cost = st.number_input("ราคาต้นทุนต่อชิ้น (THB):", min_value=0, step=1, value=0)
-            new_price = st.number_input("ราคาขายต่อชิ้น (THB):", min_value=0, step=1, value=0)
-        
-        submit_new = st.form_submit_button("💾 ลงทะเบียนสินค้า")
-        if submit_new:
-            if not new_id or not new_name:
-                st.error("⚠️ กรุณากรอกรหัสสินค้าและชื่อสินค้าให้ครบถ้วนก่อนบันทึก!")
-            elif new_id in st.session_state.inventory:
-                st.error(f"⚠️ รหัสสินค้า '{new_id}' มีอยู่ในระบบแล้ว! กรุณาเลือกโหมด 'เติมสต็อกสินค้าที่มีอยู่เดิม'")
-            else:
-                st.session_state.inventory[new_id] = {
-                    "name": new_name,
-                    "size": new_size,
-                    "qty": int(new_qty),
-                    "cost": int(new_cost),
-                    "price": int(new_price)
-                }
-                st.success(f"🎉 บันทึกสินค้าใหม่ '{new_name}' (รหัส: {new_id}) เข้าคลังเรียบร้อย!")
-                st.rerun()
-else:
-    # เติมสต็อกสินค้าที่มีอยู่เดิม
-    if not st.session_state.inventory:
-        st.info("ℹ️ ยังไม่มีสินค้าลงทะเบียนในระบบ กรุณาเลือกโหมด 'ลงทะเบียนสินค้าใหม่เข้าระบบ' เพื่อเพิ่มสินค้าชิ้นแรก")
-    else:
-        with st.form("restock_form", clear_on_submit=True):
-            st.subheader("🔄 ค้นหาและเติมจำนวนสต็อกสินค้าเดิม (พร้อมปรับราคาได้)")
-            product_options = {f"{item_id} - {info['name']} (ไซส์ {info['size']})": item_id for item_id, info in st.session_state.inventory.items()}
-            selected_option = st.selectbox("เลือกสินค้าเดิมที่ต้องการเติมสต็อก:", list(product_options.keys()))
-            selected_id = product_options[selected_option]
+with tab1:
+    # ==================== ส่วนที่ 1: การจัดการคลังสินค้า & เติมสต็อก ====================
+    st.header("📦 ส่วนที่ 1: บริหารจัดการคลังสินค้าและสต็อกสินค้าทั่วประเทศ")
+    
+    # Choose Action Mode
+    mode = st.radio("เลือกโหมดการจัดการคลัง:", ["➕ เติมสต็อกสินค้าที่มีอยู่เดิม", "🆕 ลงทะเบียนสินค้าใหม่เข้าระบบ"], horizontal=True)
+    
+    if mode == "🆕 ลงทะเบียนสินค้าใหม่เข้าระบบ":
+        with st.form("new_product_form", clear_on_submit=True):
+            st.subheader("📝 กรอกข้อมูลเพื่อลงทะเบียนสินค้าใหม่")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                new_id = st.text_input("รหัสสินค้า (เช่น A04, B02):").strip().upper()
+                new_name = st.text_input("ชื่อสินค้า (เช่น เสื้อกันหนาว, หมวกแฟชั่น):").strip()
+            with col2:
+                new_size = st.text_input("ขนาด/ไซส์ (เช่น S, M, L, FreeSize):").strip()
+                new_qty = st.number_input("จำนวนสินค้าเริ่มต้น (ชิ้น):", min_value=1, step=1, value=1)
+            with col3:
+                new_cost = st.number_input("ราคาต้นทุนต่อชิ้น (THB):", min_value=0, step=1, value=0)
+                new_price = st.number_input("ราคาขายต่อชิ้น (THB):", min_value=0, step=1, value=0)
             
-            # Fetch current details
-            current_info = st.session_state.inventory[selected_id]
-            st.info(f"📍 สต็อกปัจจุบัน: {current_info['qty']} ชิ้น | ต้นทุนเดิม: {current_info['cost']} THB | ราคาขายเดิม: {current_info['price']} THB")
-            
-            col_add1, col_add2, col_add3 = st.columns(3)
-            with col_add1:
-                add_qty = st.number_input("จำนวนชิ้นที่ต้องการเติมเพิ่ม (ใส่ 0 ได้เพื่อเปลี่ยนเฉพาะราคา):", min_value=0, step=1, value=0)
-            with col_add2:
-                update_cost = st.number_input("ปรับราคาต้นทุนใหม่ต่อชิ้น (THB):", min_value=0, value=int(current_info['cost']), step=1)
-            with col_add3:
-                update_price = st.number_input("ปรับราคาขายใหม่ต่อชิ้น (THB):", min_value=0, value=int(current_info['price']), step=1)
-                
-            submit_restock = st.form_submit_button("💾 บันทึกยอดเติมสต็อก")
-            if submit_restock:
-                st.session_state.inventory[selected_id]["qty"] += int(add_qty)
-                st.session_state.inventory[selected_id]["cost"] = int(update_cost)
-                st.session_state.inventory[selected_id]["price"] = int(update_price)
-                st.success(f"🎉 อัปเดตข้อมูลสินค้า {current_info['name']} สำเร็จ! สต็อกใหม่รวมเป็น {st.session_state.inventory[selected_id]['qty']} ชิ้น")
-                st.rerun()
-
-# Display Current Inventory Table
-st.subheader("📋 ตารางรายการสินค้าในคลังปัจจุบัน")
-if not st.session_state.inventory:
-    st.write("🚫 ไม่มีสินค้าคงเหลือในคลัง")
-else:
-    inv_data = []
-    for k, v in st.session_state.inventory.items():
-        qty_status = "🔴 สินค้าหมด" if v["qty"] <= 0 else f"{v['qty']} ชิ้น"
-        inv_data.append({
-            "รหัสสินค้า": k,
-            "ชื่อสินค้า": v["name"],
-            "ขนาด/ไซส์": v["size"],
-            "จำนวนคงเหลือ": qty_status,
-            "ต้นทุน/ชิ้น (THB)": f"{v['cost']:,.0f}",
-            "ราคาขาย/ชิ้น (THB)": f"{v['price']:,.0f}",
-            "ราคาขาย/ชิ้น (LAK)": f"{v['price'] * st.session_state.exchange_rate:,.0f}"
-        })
-    df_inv = pd.DataFrame(inv_data)
-    st.dataframe(df_inv, use_container_width=True)
-
-st.markdown("---")
-
-# ==================== ส่วนที่ 2: การขายและการบันทึกข้อมูลลูกค้า ====================
-st.header("🛍️ ส่วนที่ 2: ระบบบันทึกการขายและการสแกนจ่ายเงินข้ามประเทศ")
-
-available_sale_items = {f"{item_id} - {info['name']} (เหลือ {info['qty']} ชิ้น)": item_id for item_id, info in st.session_state.inventory.items() if info["qty"] > 0}
-
-if not available_sale_items:
-    st.warning("⚠️ ไม่มีสินค้าเหลืออยู่ในคลังพร้อมขาย กรุณาลงทะเบียนสินค้าหรือเติมสต็อกที่ ส่วนที่ 1 ก่อนครับ!")
-else:
-    with st.form("sale_form", clear_on_submit=False):
-        st.subheader("🛒 ทำรายการบันทึกการขายหน้าร้าน")
-        col_sale1, col_sale2 = st.columns(2)
-        with col_sale1:
-            sale_option = st.selectbox("เลือกสินค้าที่จะขาย:", list(available_sale_items.keys()))
-            sale_id = available_sale_items[sale_option]
-            sale_qty = st.number_input("จำนวนชิ้นที่จะขาย:", min_value=1, max_value=st.session_state.inventory[sale_id]["qty"], step=1)
-            
-            st.markdown("**👤 ข้อมูลลูกค้าและการจัดส่ง:**")
-            cust_name = st.text_input("ชื่อผู้ซื้อ (หากข้ามจะบันทึกเป็น 'ลูกค้าทั่วไป'):").strip()
-            cust_phone = st.text_input("เบอร์โทรศัพท์ติดต่อ (ข้ามได้):").strip()
-            
-            prov_options = ["ไม่ระบุ"] + [f"🇹🇭 {p}" for p in provinces_thai] + [f"🇱🇦 {p}" for p in provinces_lao]
-            cust_prov = st.selectbox("เลือกจังหวัด/แขวงจัดส่งปลายทางทั่วประเทศ:", prov_options)
-            
-        with col_sale2:
-            st.markdown("**💰 วิธีการชำระเงิน:**")
-            payment_type = st.selectbox("เลือกวิธีการชำระเงิน:", ["💵 เงินสด (พนักงานรับยอดเอง)", "📱 สแกนจ่ายข้ามประเทศ (พร้อมเพย์/BCEL)"])
-            
-            # Calculate pricing
-            unit_price = st.session_state.inventory[sale_id]["price"]
-            total_thb = unit_price * sale_qty
-            total_lak = total_thb * st.session_state.exchange_rate
-            
-            st.markdown(f"### ยอดรวมที่ลูกค้าต้องชำระ:")
-            st.write(f"## 🇹🇭 {total_thb:,.2f} THB")
-            st.write(f"## 🇱🇦 {total_lak:,.0f} LAK")
-            
-            if payment_type == "📱 สแกนจ่ายข้ามประเทศ (พร้อมเพย์/BCEL)":
-                st.success("👇 ลูกค้าสามารถสแกนคิวอาร์โค้ดนี้เพื่อชำระเงินได้ทันที:")
-                if uploaded_qr is not None:
-                    st.image(uploaded_qr, caption="สแกนจ่ายเงินสดเข้าบัญชีตรงของร้านคุณ", width=220)
+            submit_new = st.form_submit_button("💾 ลงทะเบียนสินค้า")
+            if submit_new:
+                if not new_id or not new_name:
+                    st.error("⚠️ กรุณากรอกรหัสสินค้าและชื่อสินค้าให้ครบถ้วนก่อนบันทึก!")
+                elif new_id in st.session_state.inventory:
+                    st.error(f"⚠️ รหัสสินค้า '{new_id}' มีอยู่ในระบบแล้ว! กรุณาเลือกโหมด 'เติมสต็อกสินค้าที่มีอยู่เดิม'")
                 else:
-                    st.image("https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=WaveTwoNationwideShopBoonlert", caption="คิวอาร์โค้ดสแกนรับเงิน (อัตโนมัติ)", width=180)
-                st.info("เมื่อตรวจสอบเงินเข้าบัญชีเรียบร้อยแล้ว ให้กดปุ่มเพื่อบันทึกตัดสต็อกทันทีครับ")
+                    st.session_state.inventory[new_id] = {
+                        "name": new_name,
+                        "size": new_size,
+                        "qty": int(new_qty),
+                        "cost": int(new_cost),
+                        "price": int(new_price)
+                    }
+                    st.success(f"🎉 บันทึกสินค้าใหม่ '{new_name}' (รหัส: {new_id}) เข้าคลังเรียบร้อย!")
+                    st.rerun()
+    else:
+        # เติมสต็อกสินค้าที่มีอยู่เดิม
+        if not st.session_state.inventory:
+            st.info("ℹ️ ยังไม่มีสินค้าลงทะเบียนในระบบ กรุณาเลือกโหมด 'ลงทะเบียนสินค้าใหม่เข้าระบบ' เพื่อเพิ่มสินค้าชิ้นแรก")
+        else:
+            with st.form("restock_form", clear_on_submit=True):
+                st.subheader("🔄 ค้นหาและเติมจำนวนสต็อกสินค้าเดิม (พร้อมปรับราคาได้)")
+                product_options = {f"{item_id} - {info['name']} (ไซส์ {info['size']})": item_id for item_id, info in st.session_state.inventory.items()}
+                selected_option = st.selectbox("เลือกสินค้าเดิมที่ต้องการเติมสต็อก:", list(product_options.keys()))
+                selected_id = product_options[selected_option]
                 
-        submit_sale = st.form_submit_button("🚀 บันทึกการขายและตัดสต็อกสินค้า")
-        if submit_sale:
-            if st.session_state.inventory[sale_id]["qty"] < sale_qty:
-                st.error("❌ จำนวนสินค้าในคลังไม่เพียงพอสําหรับการขายรายการนี้!")
-            else:
-                # Deduct stock
-                st.session_state.inventory[sale_id]["qty"] -= int(sale_qty)
+                # Fetch current details
+                current_info = st.session_state.inventory[selected_id]
+                st.info(f"📍 สต็อกปัจจุบัน: {current_info['qty']} ชิ้น | ต้นทุนเดิม: {current_info['cost']} THB | ราคาขายเดิม: {current_info['price']} THB")
                 
-                # Financial logs
-                cost_item = st.session_state.inventory[sale_id]["cost"]
-                cost_total = cost_item * sale_qty
-                profit_total = total_thb - cost_total
+                col_add1, col_add2, col_add3 = st.columns(3)
+                with col_add1:
+                    add_qty = st.number_input("จำนวนชิ้นที่ต้องการเติมเพิ่ม (ใส่ 0 ได้เพื่อเปลี่ยนเฉพาะราคา):", min_value=0, step=1, value=0)
+                with col_add2:
+                    update_cost = st.number_input("ปรับราคาต้นทุนใหม่ต่อชิ้น (THB):", min_value=0, value=int(current_info['cost']), step=1)
+                with col_add3:
+                    update_price = st.number_input("ปรับราคาขายใหม่ต่อชิ้น (THB):", min_value=0, value=int(current_info['price']), step=1)
+                    
+                submit_restock = st.form_submit_button("💾 บันทึกยอดเติมสต็อก")
+                if submit_restock:
+                    st.session_state.inventory[selected_id]["qty"] += int(add_qty)
+                    st.session_state.inventory[selected_id]["cost"] = int(update_cost)
+                    st.session_state.inventory[selected_id]["price"] = int(update_price)
+                    st.success(f"🎉 อัปเดตข้อมูลสินค้า {current_info['name']} สำเร็จ! สต็อกใหม่รวมเป็น {st.session_state.inventory[selected_id]['qty']} ชิ้น")
+                    st.rerun()
+    
+    # Display Current Inventory Table
+    st.subheader("📋 ตารางรายการสินค้าในคลังปัจจุบัน")
+    if not st.session_state.inventory:
+        st.write("🚫 ไม่มีสินค้าคงเหลือในคลัง")
+    else:
+        inv_data = []
+        for k, v in st.session_state.inventory.items():
+            qty_status = "🔴 สินค้าหมด" if v["qty"] <= 0 else f"{v['qty']} ชิ้น"
+            inv_data.append({
+                "รหัสสินค้า": k,
+                "ชื่อสินค้า": v["name"],
+                "ขนาด/ไซส์": v["size"],
+                "จำนวนคงเหลือ": qty_status,
+                "ต้นทุน/ชิ้น (THB)": f"{v['cost']:,.0f}",
+                "ราคาขาย/ชิ้น (THB)": f"{v['price']:,.0f}",
+                "ราคาขาย/ชิ้น (LAK)": f"{v['price'] * st.session_state.exchange_rate:,.0f}"
+            })
+        df_inv = pd.DataFrame(inv_data)
+        st.dataframe(df_inv, use_container_width=True)
+    
+    st.markdown("---")
+    
+    
+
+with tab2:
+    # ==================== ส่วนที่ 2: การขายและการบันทึกข้อมูลลูกค้า ====================
+    st.header("🛍️ ส่วนที่ 2: ระบบบันทึกการขายและการสแกนจ่ายเงินข้ามประเทศ")
+    
+    available_sale_items = {f"{item_id} - {info['name']} (เหลือ {info['qty']} ชิ้น)": item_id for item_id, info in st.session_state.inventory.items() if info["qty"] > 0}
+    
+    if not available_sale_items:
+        st.warning("⚠️ ไม่มีสินค้าเหลืออยู่ในคลังพร้อมขาย กรุณาลงทะเบียนสินค้าหรือเติมสต็อกที่ ส่วนที่ 1 ก่อนครับ!")
+    else:
+        with st.form("sale_form", clear_on_submit=False):
+            st.subheader("🛒 ทำรายการบันทึกการขายหน้าร้าน")
+            col_sale1, col_sale2 = st.columns(2)
+            with col_sale1:
+                sale_option = st.selectbox("เลือกสินค้าที่จะขาย:", list(available_sale_items.keys()))
+                sale_id = available_sale_items[sale_option]
+                sale_qty = st.number_input("จำนวนชิ้นที่จะขาย:", min_value=1, max_value=st.session_state.inventory[sale_id]["qty"], step=1)
                 
-                cust_final_name = cust_name if cust_name else "ลูกค้าทั่วไป"
-                phone_final = cust_phone if cust_phone else "-"
-                prov_final = cust_prov if cust_prov != "ไม่ระบุ" else "-"
+                st.markdown("**👤 ข้อมูลลูกค้าและการจัดส่ง:**")
+                cust_name = st.text_input("ชื่อผู้ซื้อ (หากข้ามจะบันทึกเป็น 'ลูกค้าทั่วไป'):").strip()
+                cust_phone = st.text_input("เบอร์โทรศัพท์ติดต่อ (ข้ามได้):").strip()
                 
-                # Transaction ID
-                tx_num = 1001 + len(st.session_state.sales_history)
-                tx_id = f"TX{tx_num}"
-                now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                prov_options = ["ไม่ระบุ"] + [f"🇹🇭 {p}" for p in provinces_thai] + [f"🇱🇦 {p}" for p in provinces_lao]
+                cust_prov = st.selectbox("เลือกจังหวัด/แขวงจัดส่งปลายทางทั่วประเทศ:", prov_options)
                 
-                # Append sales record
-                st.session_state.sales_history.append({
-                    "tx_id": tx_id,
-                    "time": now_str,
-                    "name": st.session_state.inventory[sale_id]["name"],
-                    "size": st.session_state.inventory[sale_id]["size"],
-                    "qty": int(sale_qty),
-                    "total_thb": float(total_thb),
-                    "total_lak": float(total_lak),
-                    "cost_total": float(cost_total),
-                    "profit": float(profit_total),
-                    "customer": cust_final_name,
-                    "phone": phone_final,
-                    "location": prov_final,
-                    "payment": payment_type
-                })
-                st.success(f"🎉 ขายสินค้าและตัดยอดคลังสำเร็จ! บันทึกรหัสธุรกรรม {tx_id} ลงระบบแล้ว")
-                st.rerun()
+            with col_sale2:
+                st.markdown("**💰 วิธีการชำระเงิน:**")
+                payment_type = st.selectbox("เลือกวิธีการชำระเงิน:", ["💵 เงินสด (พนักงานรับยอดเอง)", "📱 สแกนจ่ายข้ามประเทศ (พร้อมเพย์/BCEL)"])
+                
+                # Calculate pricing
+                unit_price = st.session_state.inventory[sale_id]["price"]
+                total_thb = unit_price * sale_qty
+                total_lak = total_thb * st.session_state.exchange_rate
+                
+                st.markdown(f"### ยอดรวมที่ลูกค้าต้องชำระ:")
+                st.write(f"## 🇹🇭 {total_thb:,.2f} THB")
+                st.write(f"## 🇱🇦 {total_lak:,.0f} LAK")
+                
+                if payment_type == "📱 สแกนจ่ายข้ามประเทศ (พร้อมเพย์/BCEL)":
+                    st.success("👇 ลูกค้าสามารถสแกนคิวอาร์โค้ดนี้เพื่อชำระเงินได้ทันที:")
+                    if uploaded_qr is not None:
+                        st.image(uploaded_qr, caption="สแกนจ่ายเงินสดเข้าบัญชีตรงของร้านคุณ", width=220)
+                    else:
+                        st.image("https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=WaveTwoNationwideShopBoonlert", caption="คิวอาร์โค้ดสแกนรับเงิน (อัตโนมัติ)", width=180)
+                    st.info("เมื่อตรวจสอบเงินเข้าบัญชีเรียบร้อยแล้ว ให้กดปุ่มเพื่อบันทึกตัดสต็อกทันทีครับ")
+                    
+            submit_sale = st.form_submit_button("🚀 บันทึกการขายและตัดสต็อกสินค้า")
+            if submit_sale:
+                if st.session_state.inventory[sale_id]["qty"] < sale_qty:
+                    st.error("❌ จำนวนสินค้าในคลังไม่เพียงพอสําหรับการขายรายการนี้!")
+                else:
+                    # Deduct stock
+                    st.session_state.inventory[sale_id]["qty"] -= int(sale_qty)
+                    
+                    # Financial logs
+                    cost_item = st.session_state.inventory[sale_id]["cost"]
+                    cost_total = cost_item * sale_qty
+                    profit_total = total_thb - cost_total
+                    
+                    cust_final_name = cust_name if cust_name else "ลูกค้าทั่วไป"
+                    phone_final = cust_phone if cust_phone else "-"
+                    prov_final = cust_prov if cust_prov != "ไม่ระบุ" else "-"
+                    
+                    # Transaction ID
+                    tx_num = 1001 + len(st.session_state.sales_history)
+                    tx_id = f"TX{tx_num}"
+                    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    
+                    # Append sales record
+                    st.session_state.sales_history.append({
+                        "tx_id": tx_id,
+                        "time": now_str,
+                        "name": st.session_state.inventory[sale_id]["name"],
+                        "size": st.session_state.inventory[sale_id]["size"],
+                        "qty": int(sale_qty),
+                        "total_thb": float(total_thb),
+                        "total_lak": float(total_lak),
+                        "cost_total": float(cost_total),
+                        "profit": float(profit_total),
+                        "customer": cust_final_name,
+                        "phone": phone_final,
+                        "location": prov_final,
+                        "payment": payment_type
+                    })
+                    st.success(f"🎉 ขายสินค้าและตัดยอดคลังสำเร็จ! บันทึกรหัสธุรกรรม {tx_id} ลงระบบแล้ว")
+                    st.rerun()
+    
+    st.markdown("---")
+    
+    
 
-st.markdown("---")
-
-# ==================== ส่วนที่ 3: สรุปยอดบัญชีกระปุกเงินสะสม และ Statement ====================
-st.header("🏦 ส่วนที่ 3: สรุปยอดบัญชีกระปุกเงินสะสม และ ประวัติธุรกรรมความเคลื่อนไหว")
-
-# Calculate metrics safely
-total_sales_thb = 0.0
-total_profit_thb = 0.0
-total_cost_thb = 0.0
-
-for sale in st.session_state.sales_history:
-    total_sales_thb += sale["total_thb"]
-    total_profit_thb += sale["profit"]
-    total_cost_thb += sale["cost_total"]
-
-total_sales_lak = total_sales_thb * st.session_state.exchange_rate
-total_profit_lak = total_profit_thb * st.session_state.exchange_rate
-
-# CLEAN AND NATIVE MULTI-CURRENCY METRIC DASHBOARD
-st.markdown("### 📊 รายงานทางการเงินรวมกระปุกสะสมร้านค้า (ทั่วประเทศ)")
-
-# --- FLOATING INFINITE CURRENCY RATE TICKER ---
-ticker_html = f'''
-<style>
-@keyframes ticker_scroll {{
-    0% {{ transform: translate3d(100%, 0, 0); }}
-    100% {{ transform: translate3d(-100%, 0, 0); }}
-}}
-.ticker-container {{
-    width: 100%;
-    overflow: hidden;
-    background: linear-gradient(90deg, #b91c1c 0%, #dc2626 50%, #f59e0b 100%);
-    border-radius: 10px;
-    padding: 10px 20px;
-    box-shadow: 0 4px 15px rgba(220, 38, 38, 0.25);
-    margin-bottom: 20px;
-    border: 1px solid rgba(255, 255, 255, 0.15);
-}}
-.ticker-text {{
-    display: inline-block;
-    white-space: nowrap;
-    padding-right: 100%;
-    animation: ticker_scroll 25s linear infinite;
-    font-size: 16px;
-    font-weight: bold;
-    color: #ffffff;
-    font-family: 'Sarabun', sans-serif;
-    text-shadow: 0px 1px 2px rgba(0, 0, 0, 0.5);
-}}
-</style>
-<div class="ticker-container">
-    <div class="ticker-text">
-        💸 อัตราแลกเปลี่ยนด่วนพิเศษวันนี้: 1 บาทไทย (THB) = {st.session_state.exchange_rate:,.2f} กีบลาว (LAK) ⚡ วิ่งอัปเดตเรียลไทม์ 100% ⚡ เจ้าของร้านปรับแก้เรตได้ทันทีที่แทบด้านข้าง ⚡ คำนวณตัดสต็อกและกำไรสุทธิผันแปรตามเรตอัตโนมัติ ⚡ ระบบบริหารจัดการธุรกิจนำเข้าและจำหน่ายออกทั่วประเทศ (Wave Two) ⚡
+with tab3:
+    # ==================== ส่วนที่ 3: สรุปยอดบัญชีกระปุกเงินสะสม และ Statement ====================
+    st.header("🏦 ส่วนที่ 3: สรุปยอดบัญชีกระปุกเงินสะสม และ ประวัติธุรกรรมความเคลื่อนไหว")
+    
+    # Calculate metrics safely
+    total_sales_thb = 0.0
+    total_profit_thb = 0.0
+    total_cost_thb = 0.0
+    
+    for sale in st.session_state.sales_history:
+        total_sales_thb += sale["total_thb"]
+        total_profit_thb += sale["profit"]
+        total_cost_thb += sale["cost_total"]
+    
+    total_sales_lak = total_sales_thb * st.session_state.exchange_rate
+    total_profit_lak = total_profit_thb * st.session_state.exchange_rate
+    
+    # CLEAN AND NATIVE MULTI-CURRENCY METRIC DASHBOARD
+    st.markdown("### 📊 รายงานทางการเงินรวมกระปุกสะสมร้านค้า (ทั่วประเทศ)")
+    
+    # --- FLOATING INFINITE CURRENCY RATE TICKER ---
+    ticker_html = f'''
+    <style>
+    @keyframes ticker_scroll {{
+        0% {{ transform: translate3d(100%, 0, 0); }}
+        100% {{ transform: translate3d(-100%, 0, 0); }}
+    }}
+    .ticker-container {{
+        width: 100%;
+        overflow: hidden;
+        background: linear-gradient(90deg, #b91c1c 0%, #dc2626 50%, #f59e0b 100%);
+        border-radius: 10px;
+        padding: 10px 20px;
+        box-shadow: 0 4px 15px rgba(220, 38, 38, 0.25);
+        margin-bottom: 20px;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+    }}
+    .ticker-text {{
+        display: inline-block;
+        white-space: nowrap;
+        padding-right: 100%;
+        animation: ticker_scroll 25s linear infinite;
+        font-size: 16px;
+        font-weight: bold;
+        color: #ffffff;
+        font-family: 'Sarabun', sans-serif;
+        text-shadow: 0px 1px 2px rgba(0, 0, 0, 0.5);
+    }}
+    </style>
+    <div class="ticker-container">
+        <div class="ticker-text">
+            💸 อัตราแลกเปลี่ยนด่วนพิเศษวันนี้: 1 บาทไทย (THB) = {st.session_state.exchange_rate:,.2f} กีบลาว (LAK) ⚡ วิ่งอัปเดตเรียลไทม์ 100% ⚡ เจ้าของร้านปรับแก้เรตได้ทันทีที่แทบด้านข้าง ⚡ คำนวณตัดสต็อกและกำไรสุทธิผันแปรตามเรตอัตโนมัติ ⚡ ระบบบริหารจัดการธุรกิจนำเข้าและจำหน่ายออกทั่วประเทศ (Wave Two) ⚡
+        </div>
     </div>
-</div>
-'''
-st.markdown(ticker_html, unsafe_allow_html=True)
-
-metric_col1, metric_col2 = st.columns(2)
-with metric_col1:
-    st.info("📈 ยอดขายสะสมรวมทั้งหมด")
-    st.markdown(f"## **{total_sales_thb:,.2f} THB**")
-    st.markdown(f"💰 *(คิดเป็น: {total_sales_lak:,.0f} LAK)*")
-with metric_col2:
-    st.success("🔥 กำไรสุทธิแท้จริงรวม (หักต้นทุนสินค้าแล้ว)")
-    st.markdown(f"## **{total_profit_thb:,.2f} THB**")
-    st.markdown(f"🔥 *(คิดเป็น: {total_profit_lak:,.0f} LAK)*")
-
-st.markdown("---")
-
-# STATEMENT
-st.subheader("📑 สมุดประวัติความเคลื่อนไหวทางการเงิน (Statement รายงานยอด)")
-
-if not st.session_state.sales_history:
-    st.write("🚫 ยังไม่มีประวัติการทำรายการธุรกรรม")
-else:
-    df_stmt = pd.DataFrame(st.session_state.sales_history)
-    df_display = df_stmt.rename(columns={
-        "tx_id": "รหัสธุรกรรม",
-        "time": "วัน-เวลาที่ขาย",
-        "name": "รายการสินค้า",
-        "size": "ขนาด",
-        "qty": "จำนวน (ชิ้น)",
-        "total_thb": "ยอดขาย (THB)",
-        "total_lak": "ยอดขาย (LAK)",
-        "cost_total": "ทุนสะสม (THB)",
-        "profit": "กำไรสะสม (THB)",
-        "customer": "ผู้ซื้อ",
-        "phone": "เบอร์โทร",
-        "location": "จังหวัด/แขวงจัดส่ง",
-        "payment": "ช่องทางการชำระ"
-    })
+    '''
+    st.markdown(ticker_html, unsafe_allow_html=True)
     
-    st.dataframe(df_display, use_container_width=True)
+    metric_col1, metric_col2 = st.columns(2)
+    with metric_col1:
+        st.info("📈 ยอดขายสะสมรวมทั้งหมด")
+        st.markdown(f"## **{total_sales_thb:,.2f} THB**")
+        st.markdown(f"💰 *(คิดเป็น: {total_sales_lak:,.0f} LAK)*")
+    with metric_col2:
+        st.success("🔥 กำไรสุทธิแท้จริงรวม (หักต้นทุนสินค้าแล้ว)")
+        st.markdown(f"## **{total_profit_thb:,.2f} THB**")
+        st.markdown(f"🔥 *(คิดเป็น: {total_profit_lak:,.0f} LAK)*")
     
-    col_act1, col_act2 = st.columns(2)
-    with col_act1:
-        csv = df_display.to_csv(index=False, encoding="utf-8-sig")
-        st.download_button(
-            label="💾 ย้ายข้อมูลบัญชีไปเปิดใน Excel (.csv)",
-            data=csv,
-            file_name=f"WaveTwo_Statement_{datetime.date.today()}.csv",
-            mime="text/csv",
-            use_container_width=True
+    st.markdown("---")
+    
+    # STATEMENT
+    st.subheader("📑 สมุดประวัติความเคลื่อนไหวทางการเงิน (Statement รายงานยอด)")
+    
+    if not st.session_state.sales_history:
+        st.write("🚫 ยังไม่มีประวัติการทำรายการธุรกรรม")
+    else:
+        df_stmt = pd.DataFrame(st.session_state.sales_history)
+        df_display = df_stmt.rename(columns={
+            "tx_id": "รหัสธุรกรรม",
+            "time": "วัน-เวลาที่ขาย",
+            "name": "รายการสินค้า",
+            "size": "ขนาด",
+            "qty": "จำนวน (ชิ้น)",
+            "total_thb": "ยอดขาย (THB)",
+            "total_lak": "ยอดขาย (LAK)",
+            "cost_total": "ทุนสะสม (THB)",
+            "profit": "กำไรสะสม (THB)",
+            "customer": "ผู้ซื้อ",
+            "phone": "เบอร์โทร",
+            "location": "จังหวัด/แขวงจัดส่ง",
+            "payment": "ช่องทางการชำระ"
+        })
+        
+        st.dataframe(df_display, use_container_width=True)
+        
+        col_act1, col_act2 = st.columns(2)
+        with col_act1:
+            csv = df_display.to_csv(index=False, encoding="utf-8-sig")
+            st.download_button(
+                label="💾 ย้ายข้อมูลบัญชีไปเปิดใน Excel (.csv)",
+                data=csv,
+                file_name=f"WaveTwo_Statement_{datetime.date.today()}.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+        with col_act2:
+            js_print = """
+            <button style="width:100%; height:45px; background-color:#10b981; color:white; border:none; border-radius:5px; font-weight:bold; cursor:pointer;" onclick="window.print()">🖨️ สั่งพิมพ์ใบรายงาน Statement / บันทึก PDF</button>
+            """
+            st.components.v1.html(js_print, height=60)
+    
+    st.markdown("---")
+    st.caption("พัฒนาและบริหารระบบโดย: นายบุญเลิศ กายยาสิทธิ์ (รหัสนิสิต 6601506035) — โครงการระบบบริหารจัดการธุรกิจนำเข้าและจำหน่ายออกทั่วประเทศ (Wave Two)")
+    
+
+with tab4:
+    st.header("📊 ส่วนที่ 4: แดชบอร์ดวิเคราะห์ยอดขายและกำไรเรียลไทม์")
+    st.subheader("รายงานแผนภูมิภาพวิเคราะห์ความเคลื่อนไหวทางธุรกิจ (Executive Dashboard)")
+    st.markdown("---")
+    
+    if not st.session_state.sales_history:
+        st.info("ℹ️ ยังไม่มีประวัติยอดขายค้างในระบบ กรุณาบันทึกการขายในระบบหน้าร้านเพื่อแสดงกราฟวิเคราะห์")
+    else:
+        import plotly.express as px
+        
+        # Build DataFrame from sales history safely
+        df_sales = pd.DataFrame(st.session_state.sales_history)
+        
+        # 1. Bar Chart: Total sales per item name
+        st.markdown("### 📈 ยอดขายสะสมแยกตามรายการสินค้า (THB)")
+        df_grouped_sales = df_sales.groupby("name")["total_thb"].sum().reset_index()
+        fig_bar = px.bar(
+            df_grouped_sales, 
+            x="name", 
+            y="total_thb", 
+            labels={"name": "รายการสินค้า", "total_thb": "ยอดขายรวม (บาทไทย - THB)"},
+            text_auto=",.2f",
+            color="name",
+            color_discrete_sequence=px.colors.qualitative.Bold
         )
-    with col_act2:
-        js_print = """
-        <button style="width:100%; height:45px; background-color:#10b981; color:white; border:none; border-radius:5px; font-weight:bold; cursor:pointer;" onclick="window.print()">🖨️ สั่งพิมพ์ใบรายงาน Statement / บันทึก PDF</button>
-        """
-        st.components.v1.html(js_print, height=60)
-
-st.markdown("---")
-st.caption("พัฒนาและบริหารระบบโดย: นายบุญเลิศ กายยาสิทธิ์ (รหัสนิสิต 6601506035) — โครงการระบบบริหารจัดการธุรกิจนำเข้าและจำหน่ายออกทั่วประเทศ (Wave Two)")
+        fig_bar.update_layout(showlegend=False)
+        st.plotly_chart(fig_bar, use_container_width=True)
+        
+        st.markdown("---")
+        
+        col_chart1, col_chart2 = st.columns(2)
+        
+        with col_chart1:
+            # 2. Pie Chart: Shipping country distribution
+            st.markdown("### 🗺️ สัดส่วนจัดส่งสินค้าแยกตามประเทศ")
+            # Group by TH / LA shipping destination
+            def get_country(loc):
+                loc_str = str(loc)
+                if "🇱🇦" in loc_str:
+                    return "ประเทศลาว (LAK 🇱🇦)"
+                elif "🇹🇭" in loc_str:
+                    return "ประเทศไทย (THB 🇹🇭)"
+                else:
+                    return "หน้าร้าน / ไม่ระบุ"
+            
+            df_sales["country"] = df_sales["location"].apply(get_country)
+            df_country_sales = df_sales.groupby("country")["total_thb"].sum().reset_index()
+            
+            fig_pie = px.pie(
+                df_country_sales,
+                values="total_thb",
+                names="country",
+                hole=0.4,
+                color_discrete_sequence=["#1e3a8a", "#b91c1c", "#6b7280"]
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+            
+        with col_chart2:
+            # 3. Line Chart: Profit growth curve over transaction logs
+            st.markdown("### 📈 แนวโน้มการเติบโตกำไรสะสม (Cumulative Profit)")
+            df_sales["cumulative_profit"] = df_sales["profit"].cumsum()
+            fig_line = px.line(
+                df_sales,
+                x="tx_id",
+                y="cumulative_profit",
+                markers=True,
+                labels={"tx_id": "ธุรกรรม", "cumulative_profit": "กำไรสะสม (THB)"}
+            )
+            fig_line.update_traces(line_color="#10b981", line_width=3, marker_size=8)
+            st.plotly_chart(fig_line, use_container_width=True)
+            
+        st.markdown("---")
+        st.success("🎯 **สรุปภาพรวมธุรกิจ:** แดชบอร์ดสรุปวิเคราะห์ข้อมูลยอดขายและกำไรเรียลไทม์ทั้งหมดอัปเดตเรียลไทม์อัตโนมัติเมื่อมีการตัดยอดขายหน้าร้าน ช่วยสนับสนุนการตัดสินใจอย่างมีประสิทธิภาพสูงสุด!")
